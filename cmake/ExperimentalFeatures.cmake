@@ -18,6 +18,3 @@ else()
 	add_feature_info("SHA256 API" OFF "experimental SHA256 APIs")
 endif()
 
-if(EXPERIMENTAL)
-	set(LIBGIT2_FILENAME "${LIBGIT2_FILENAME}-experimental")
-endif()

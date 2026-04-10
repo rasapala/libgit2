@@ -19,7 +19,7 @@ static BOOL WINAPI interrupt_proxy(DWORD signal)
 	return TRUE;
 }
 
-int cli_sighandler_set_interrupt(void (*handler)(void))
+GIT_EXTERN(int) cli_sighandler_set_interrupt(void (*handler)(void))
 {
 	BOOL result;
 

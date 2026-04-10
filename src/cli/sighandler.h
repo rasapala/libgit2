@@ -15,6 +15,6 @@
  * @param handler The function to run on interrupt
  * @return 0 on success, -1 on failure
  */
-int cli_sighandler_set_interrupt(void (*handler)(void));
+GIT_EXTERN(int) cli_sighandler_set_interrupt(void (*handler)(void));
 
 #endif /* CLI_sighandler_h__ */

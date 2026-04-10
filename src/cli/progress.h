@@ -58,7 +58,7 @@ typedef struct {
  * @param payload A pointer to the cli_progress
  * @return 0 on success, -1 on failure
  */
-extern int cli_progress_fetch_sideband(
+GIT_EXTERN(int) cli_progress_fetch_sideband(
 	const char *str,
 	int len,
 	void *payload);
@@ -71,7 +71,7 @@ extern int cli_progress_fetch_sideband(
  * @param payload A pointer to the cli_progress
  * @return 0 on success, -1 on failure
  */
-extern int cli_progress_fetch_transfer(
+GIT_EXTERN(int) cli_progress_fetch_transfer(
 	const git_indexer_progress *stats,
 	void *payload);
 
@@ -95,7 +95,7 @@ extern int cli_progress_indexer(
  * @param total_steps The total number of checkout steps
  * @param payload A pointer to the cli_progress
  */
-extern void cli_progress_checkout(
+GIT_EXTERN(void) cli_progress_checkout(
 	const char *path,
 	size_t completed_steps,
 	size_t total_steps,

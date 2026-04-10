@@ -72,6 +72,7 @@ extern int git_filter_list__apply_to_file(
 
 extern git_filter *git_crlf_filter_new(void);
 extern git_filter *git_ident_filter_new(void);
+extern git_filter *git_lfs_filter_new(void);
 
 extern int git_filter_buffered_stream_new(
 	git_writestream **out,

@@ -32,10 +32,18 @@ GIT_EXTERN(git_filter *) git_filter_lookup(const char *name);
 /** The "ident" filter */
 #define GIT_FILTER_IDENT "ident"
 
+/** The "lfs" filter */
+#define GIT_FILTER_LFS "lfs"
+
 /**
  * This is priority that the internal CRLF filter will be registered with
  */
 #define GIT_FILTER_CRLF_PRIORITY 0
+
+/**
+ * This is priority that the internal CRLF filter will be registered with
+ */
+#define GIT_FILTER_LFS_PRIORITY 199
 
 /**
  * This is priority that the internal ident filter will be registered with

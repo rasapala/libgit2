@@ -186,6 +186,15 @@ GIT_EXTERN(int) git_repository_open_ext(
 	const char *ceiling_dirs);
 
 /**
+ * Set repository url member
+ *
+ *
+ * @param repo repository handle to update. If NULL nothing occurs.
+ * @param url the remote repository to clone or run checkout against.
+ */
+GIT_EXTERN(int) git_repository_set_url(git_repository *repo, const char *url);
+
+/**
  * Open a bare repository on the serverside.
  *
  * This is a fast open for bare repositories that will come in handy

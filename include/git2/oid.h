@@ -21,14 +21,8 @@ GIT_BEGIN_DECL
 
 /** The type of object id. */
 typedef enum {
-
-#ifdef GIT_EXPERIMENTAL_SHA256
 	GIT_OID_SHA1 = 1,  /**< SHA1 */
 	GIT_OID_SHA256 = 2 /**< SHA256 */
-#else
-	GIT_OID_SHA1 = 1   /**< SHA1 */
-#endif
-
 } git_oid_t;
 
 /*

@@ -24,6 +24,7 @@
 #include "repository.h"
 #include "odb.h"
 #include "net.h"
+#include "progress.h"
 
 static int create_branch(
 	git_reference **branch,
@@ -616,6 +617,21 @@ static int clone_repo(
 
 	GIT_ERROR_CHECK_VERSION(&options, GIT_CLONE_OPTIONS_VERSION, "git_clone_options");
 
+
+	cli_progress progress = CLI_PROGRESS_INIT;
+	git_checkout_options checkout_opts = GIT_CHECKOUT_OPTIONS_INIT;
+
+	/* Set up options */
+	checkout_opts.checkout_strategy = GIT_CHECKOUT_SAFE;
+	checkout_opts.progress_cb = cli_progress_checkout;
+	checkout_opts.progress_payload = &progress;
+	options.checkout_opts = checkout_opts;
+	options.fetch_opts.callbacks.sideband_progress =
+	        cli_progress_fetch_sideband;
+	options.fetch_opts.callbacks.transfer_progress =
+	        cli_progress_fetch_transfer;
+	options.fetch_opts.callbacks.payload = &progress;
+
 	/* enforce some behavior on fetch */
 	options.fetch_opts.update_fetchhead = 0;
 
@@ -638,14 +654,22 @@ static int clone_repo(
 	else
 		repository_cb = default_repository_create;
 
-	if ((error = repository_cb(&repo, local_path, options.bare, options.repository_cb_payload)) < 0)
+	if ((error = repository_cb(
+	             &repo, local_path, options.bare,
+	             options.repository_cb_payload)) < 0) {
+		cli_progress_abort(&progress);
+		cli_progress_dispose(&progress);
 		return error;
+	}
 
+	repo->url = git__strdup(url);
 	if (!(error = create_and_configure_origin(&origin, repo, url, &options))) {
 		bool clone_local;
 
 		if ((error = git_clone__should_clone_local(&clone_local, url, options.local)) < 0) {
 			git_remote_free(origin);
+			cli_progress_abort(&progress);
+			cli_progress_dispose(&progress);
 			return error;
 		}
 
@@ -669,6 +693,8 @@ static int clone_repo(
 		git_error_restore(last_error);
 	}
 
+	cli_progress_finish(&progress);
+	cli_progress_dispose(&progress);
 	*out = repo;
 	return error;
 }

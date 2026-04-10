@@ -190,7 +190,7 @@ static int filter_registry_insert(
 
 int git_filter_global_init(void)
 {
-	git_filter *crlf = NULL, *ident = NULL;
+	git_filter *crlf = NULL, *ident = NULL, *lfs = NULL;
 	int error = 0;
 
 	if (git_rwlock_init(&filter_registry.lock) < 0)
@@ -205,7 +205,11 @@ int git_filter_global_init(void)
 			GIT_FILTER_CRLF, crlf, GIT_FILTER_CRLF_PRIORITY) < 0 ||
 		(ident = git_ident_filter_new()) == NULL ||
 		filter_registry_insert(
-			GIT_FILTER_IDENT, ident, GIT_FILTER_IDENT_PRIORITY) < 0)
+			GIT_FILTER_IDENT, ident, GIT_FILTER_IDENT_PRIORITY) < 0 ||
+		(lfs = git_lfs_filter_new()) == NULL ||
+		filter_registry_insert(
+			GIT_FILTER_LFS, lfs, GIT_FILTER_LFS_PRIORITY) < 0
+			)
 		error = -1;
 
 	if (!error)
@@ -215,6 +219,7 @@ done:
 	if (error) {
 		git_filter_free(crlf);
 		git_filter_free(ident);
+		git_filter_free(lfs);
 	}
 
 	return error;

@@ -16,6 +16,7 @@ else()
 endif()
 
 file(GLOB CLI_SRC_C *.c *.h)
+list(FILTER CLI_SRC_C EXCLUDE REGEX "progress*")
 list(SORT CLI_SRC_C)
 
 #

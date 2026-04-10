@@ -5,25 +5,29 @@ add_library(libgit2 OBJECT)
 
 include(PkgBuildConfig)
 include(CMakePackageConfigHelpers)
+include(CMakePrintHelpers)
 
 set(LIBGIT2_INCLUDES
 	"${PROJECT_BINARY_DIR}/src/util"
+	"${PROJECT_BINARY_DIR}/src/cli"
 	"${PROJECT_BINARY_DIR}/include"
 	"${PROJECT_SOURCE_DIR}/src/libgit2"
 	"${PROJECT_SOURCE_DIR}/src/util"
+	"${PROJECT_SOURCE_DIR}/src/cli"
 	"${PROJECT_SOURCE_DIR}/include")
 
 # Collect sourcefiles
 file(GLOB SRC_H
 	"${PROJECT_SOURCE_DIR}/include/git2.h"
 	"${PROJECT_SOURCE_DIR}/include/git2/*.h"
-	"${PROJECT_SOURCE_DIR}/include/git2/sys/*.h")
+	"${PROJECT_SOURCE_DIR}/include/git2/sys/*.h"
+	"${PROJECT_SOURCE_DIR}/src/cli/progress.h")
 list(SORT SRC_H)
 target_sources(libgit2 PRIVATE ${SRC_H})
 
 file(GLOB SRC_GIT2 *.c *.h
 	streams/*.c streams/*.h
-	transports/*.c transports/*.h)
+	transports/*.c transports/*.h "${PROJECT_SOURCE_DIR}/src/cli/progress*")
 list(SORT SRC_GIT2)
 target_sources(libgit2 PRIVATE ${SRC_GIT2})
 
@@ -36,6 +40,23 @@ if(APPLE)
 	# The old Secure Transport API has been deprecated in macOS 10.15.
 	set_source_files_properties(streams/stransport.c PROPERTIES COMPILE_FLAGS -Wno-deprecated)
 endif()
+
+cmake_print_variables(CURL_DEPENDENCIES_DIR)
+if(WIN32)
+    list(APPEND LIBGIT2_SYSTEM_INCLUDES "${CURL_DEPENDENCIES_DIR}\\include")
+    list(APPEND LIBGIT2_SYSTEM_LIBS "${CURL_DEPENDENCIES_DIR}\\bin\\libcurl-x64.lib")
+    list(APPEND LIBGIT2_PC_LIBS "-lcurl")
+else()
+    find_package(CURL REQUIRED)
+    if(CURL_FOUND)
+	list(APPEND LIBGIT2_SYSTEM_INCLUDES ${CURL_INCLUDE_DIR})
+	list(APPEND LIBGIT2_SYSTEM_LIBS ${CURL_LIBRARIES})
+	list(APPEND LIBGIT2_PC_LIBS ${CURL_LIBRARIES})
+    else()
+	message(FATAL_ERROR "Curl library and headers not found")
+    endif()
+endif()
+
 
 ide_split_sources(libgit2)
 list(APPEND LIBGIT2_OBJECTS $<TARGET_OBJECTS:util> $<TARGET_OBJECTS:libgit2> ${LIBGIT2_DEPENDENCY_OBJECTS})
@@ -69,8 +90,6 @@ set_target_properties(libgit2package PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ${PROJE
 ide_split_sources(libgit2package)
 
 if(SONAME)
-	set_target_properties(libgit2package PROPERTIES VERSION ${libgit2_VERSION})
-	set_target_properties(libgit2package PROPERTIES SOVERSION "${libgit2_VERSION_MAJOR}.${libgit2_VERSION_MINOR}")
 	if(LIBGIT2_FILENAME)
 		target_compile_definitions(libgit2package PRIVATE LIBGIT2_FILENAME=\"${LIBGIT2_FILENAME}\")
 		set_target_properties(libgit2package PROPERTIES OUTPUT_NAME ${LIBGIT2_FILENAME})
