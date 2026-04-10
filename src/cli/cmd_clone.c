@@ -183,69 +183,70 @@ int cmd_clone(int argc, char **argv)
 
 	cli_progress_finish(&progress);
 
-	// Code below for testing resume in native libgit2
-	git_repository *repo2 = NULL;
-	int error = git_repository_open_ext(&repo2, local_path, 0, NULL);
-	// HEAD state info
-	bool is_detached = git_repository_head_detached(repo2) == 1;
-	bool is_unborn = git_repository_head_unborn(repo2) == 1;
+	/* Code below for testing resume in native libgit2 */
+	{
+		git_repository *repo2 = NULL;
+		git_status_options opts = GIT_STATUS_OPTIONS_INIT;
+		git_status_list *status_list = NULL;
+		size_t staged = 0, unstaged = 0, untracked = 0, conflicted = 0;
+		size_t n, i;
+		int is_detached, is_unborn;
 
-	// Collect status (staged/unstaged/untracked)
-	git_status_options opts = GIT_STATUS_OPTIONS_INIT;
+		git_repository_open_ext(&repo2, local_path, 0, NULL);
 
-	opts.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
-	opts.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED // include untracked files
-	                                              // // |
-	                                              // GIT_STATUS_OPT_RENAMES_HEAD_TO_INDEX
-	                                              // // detect renames
-	                                              // HEAD->index - not
-	                                              // required currently and
-	                                              // impacts performance
-	             | GIT_STATUS_OPT_SORT_CASE_SENSITIVELY;
+		/* HEAD state info */
+		is_detached = git_repository_head_detached(repo2) == 1;
+		is_unborn   = git_repository_head_unborn(repo2)   == 1;
 
-	git_status_list *status_list = NULL;
-	ret = git_status_list_new(&status_list, repo2, &opts);
+		/* Collect status (staged/unstaged/untracked) */
+		opts.show  = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
+		opts.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED
+		             | GIT_STATUS_OPT_SORT_CASE_SENSITIVELY;
 
-	size_t staged = 0, unstaged = 0, untracked = 0, conflicted = 0;
-	const size_t n = git_status_list_entrycount(status_list);
+		ret = git_status_list_new(&status_list, repo2, &opts);
 
-	for (size_t i = 0; i < n; ++i) {
-		const git_status_entry *e = git_status_byindex(status_list, i);
-		if (!e)
-			continue;
-		unsigned s = e->status;
+		n = git_status_list_entrycount(status_list);
+		for (i = 0; i < n; ++i) {
+			const git_status_entry *e = git_status_byindex(status_list, i);
+			unsigned int s;
+			if (!e)
+				continue;
+			s = e->status;
 
-		// Staged (index) changes
-		if (s & (GIT_STATUS_INDEX_NEW | GIT_STATUS_INDEX_MODIFIED |
-		         GIT_STATUS_INDEX_DELETED | GIT_STATUS_INDEX_RENAMED |
-		         GIT_STATUS_INDEX_TYPECHANGE))
-			++staged;
+			/* Staged (index) changes */
+			if (s & (GIT_STATUS_INDEX_NEW | GIT_STATUS_INDEX_MODIFIED |
+			         GIT_STATUS_INDEX_DELETED | GIT_STATUS_INDEX_RENAMED |
+			         GIT_STATUS_INDEX_TYPECHANGE))
+				++staged;
 
-		// Unstaged (workdir) changes
-		if (s & (GIT_STATUS_WT_MODIFIED | GIT_STATUS_WT_DELETED |
-		         GIT_STATUS_WT_RENAMED | GIT_STATUS_WT_TYPECHANGE))
-			++unstaged;
+			/* Unstaged (workdir) changes */
+			if (s & (GIT_STATUS_WT_MODIFIED | GIT_STATUS_WT_DELETED |
+			         GIT_STATUS_WT_RENAMED | GIT_STATUS_WT_TYPECHANGE))
+				++unstaged;
 
-		// Untracked
-		if (s & GIT_STATUS_WT_NEW)
-			++untracked;
+			/* Untracked */
+			if (s & GIT_STATUS_WT_NEW)
+				++untracked;
 
-		// Conflicted
-		if (s & GIT_STATUS_CONFLICTED)
-			++conflicted;
+			/* Conflicted */
+			if (s & GIT_STATUS_CONFLICTED)
+				++conflicted;
+		}
+
+		/* Print summary */
+		printf("HEAD state      : %s\n",
+		       is_unborn ? "unborn (no commits)" :
+		                   (is_detached ? "detached" : "attached"));
+		printf("Staged changes  : %zu\n", staged);
+		printf("Unstaged changes: %zu\n", unstaged);
+		printf("Untracked files : %zu", untracked);
+		if (conflicted)
+			printf(" (%zu paths flagged)", conflicted);
+		printf("\n");
+
+		git_status_list_free(status_list);
+		git_repository_free(repo2);
 	}
-
-	// Print summary (mirrors your original stream output)
-	printf("HEAD state      : %s\n",
-	       is_unborn ? "unborn (no commits)" :
-                           (is_detached ? "detached" : "attached"));
-	printf("Staged changes  : %zu\n", staged);
-	printf("Unstaged changes: %zu\n", unstaged);
-	printf("Untracked files : %zu", untracked);
-	if (conflicted) {
-		printf(" (%zu paths flagged)", conflicted);
-	}
-	printf("\n");
 done:
 	cli_progress_dispose(&progress);
 	git__free(computed_path);
