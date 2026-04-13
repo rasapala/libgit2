@@ -42,6 +42,15 @@
 extern int git_lfs_shutdown_requested(void) __attribute__((weak));
 #endif
 
+/*
+ * Exported global cancel flag.
+ * The embedding process may set this to non-zero at any time to abort all
+ * ongoing or future LFS downloads in this process.  Resetting it to 0
+ * before a new clone allows reuse.
+ * Access via symbol from the host: extern volatile int git_lfs_cancel_requested;
+ */
+volatile int git_lfs_cancel_requested = 0;
+
 #define LFS_RESUME_ATTEMPTS_DEFAULT 5
 #define LFS_RESUME_INTERVAL_DEFAULT_SECONDS 10
 
@@ -56,7 +65,12 @@ static bool g_lfs_log_path_truncated = false;
 
 static int lfs_shutdown_requested(void)
 {
+	/* Check the exported global flag first – reliably set from the host
+	 * without requiring symbol interposition (-rdynamic). */
+	if (git_lfs_cancel_requested)
+		return 1;
 #if defined(__GNUC__) || defined(__clang__)
+	/* Fallback: weak symbol provided by the host executable. */
 	if (git_lfs_shutdown_requested)
 		return git_lfs_shutdown_requested() != 0;
 #endif
@@ -1558,6 +1572,13 @@ static void lfs_download(git_filter *self, void *payload)
 	CURL_SETOPT(curl_easy_setopt(
 	        info_curl, CURLOPT_WRITEDATA, (void *)&response));
 	CURL_SETOPT(curl_easy_setopt(info_curl, CURLOPT_CERTINFO, 1L));
+	/* Enable xferinfo callback on info_curl so batch request can be
+	 * cancelled mid-transfer by progress_callback returning non-zero. */
+	CURL_SETOPT(curl_easy_setopt(info_curl, CURLOPT_NOPROGRESS, 0L));
+	CURL_SETOPT(curl_easy_setopt(
+	        info_curl, CURLOPT_XFERINFOFUNCTION, progress_callback));
+	CURL_SETOPT(curl_easy_setopt(
+	        info_curl, CURLOPT_XFERINFODATA, &progress_d));
 
 	if (status != CURLE_OK) {
 		lfs_log_error("\n[ERROR] curl_easy_setopt() failed: %s\n",
