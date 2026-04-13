@@ -1325,9 +1325,13 @@ static int curl_resume_url_execute(CURL *dl_curl, struct FtpFile *ftpfile)
 	/* Tell libcurl to resume */
 	curl_easy_setopt(dl_curl, CURLOPT_RESUME_FROM_LARGE, offset);
 	/* Perform the request, res gets the return code */
+	if (lfs_shutdown_requested())
+		return CURLE_ABORTED_BY_CALLBACK;
 
 	/* Perform the request, res gets the return code */
 	res = curl_easy_perform(dl_curl);
+	if (res == CURLE_OK && lfs_shutdown_requested())
+		return CURLE_ABORTED_BY_CALLBACK;
 
 	/* Validate that server honored Range (206) when offset > 0 */
 	if (res == CURLE_OK && offset > 0) {
@@ -1358,7 +1362,11 @@ static int curl_resume_url_execute(CURL *dl_curl, struct FtpFile *ftpfile)
 			        dl_curl, CURLOPT_RESUME_FROM_LARGE, offset);
 
 			/* Retry exactly once as a full download. */
+			if (lfs_shutdown_requested())
+				return CURLE_ABORTED_BY_CALLBACK;
 			res = curl_easy_perform(dl_curl);
+			if (res == CURLE_OK && lfs_shutdown_requested())
+				return CURLE_ABORTED_BY_CALLBACK;
 		}
 	}
 
@@ -1557,7 +1565,15 @@ static void lfs_download(git_filter *self, void *payload)
 		goto cleanup;
 	}
 	/* Perform the request, res gets the return code */
+	if (lfs_shutdown_requested()) {
+		res = CURLE_ABORTED_BY_CALLBACK;
+		goto cleanup;
+	}
 	res = curl_easy_perform(info_curl);
+	if (res == CURLE_OK && lfs_shutdown_requested()) {
+		res = CURLE_ABORTED_BY_CALLBACK;
+		goto cleanup;
+	}
 	/* Check for errors */
 	if (res != CURLE_OK) {
 		print_curl_error_details(
@@ -1639,7 +1655,15 @@ static void lfs_download(git_filter *self, void *payload)
 	} else {
 		print_download_info(la->full_path, lfs_expected_size);
 		/* Perform the request, res gets the return code */
+		if (lfs_shutdown_requested()) {
+			res = CURLE_ABORTED_BY_CALLBACK;
+			goto cleanup;
+		}
 		res = curl_easy_perform(dl_curl);
+		if (res == CURLE_OK && lfs_shutdown_requested()) {
+			res = CURLE_ABORTED_BY_CALLBACK;
+			goto cleanup;
+		}
 		if (res == CURLE_OK)
 			res = ftpfile_validate_final_size(&ftpfile);
 	}
