@@ -35,6 +35,13 @@
 #include "regexp.h"
 #include "time.h"
 
+#if defined(__GNUC__) || defined(__clang__)
+/* Optional host-provided cancellation probe.
+ * If not defined by the embedding process, this stays NULL (weak symbol).
+ */
+extern int git_lfs_shutdown_requested(void) __attribute__((weak));
+#endif
+
 #define LFS_RESUME_ATTEMPTS_DEFAULT 5
 #define LFS_RESUME_INTERVAL_DEFAULT_SECONDS 10
 
@@ -46,6 +53,15 @@ static unsigned int g_lfs_resume_interval_secs = 10; /* <-- make configurable */
 static char g_lfs_log_path[4096];
 /* Track if we've truncated the log file for the current workdir */
 static bool g_lfs_log_path_truncated = false;
+
+static int lfs_shutdown_requested(void)
+{
+#if defined(__GNUC__) || defined(__clang__)
+	if (git_lfs_shutdown_requested)
+		return git_lfs_shutdown_requested() != 0;
+#endif
+	return 0;
+}
 
 /*
  * lfs_log_set_path
@@ -1023,6 +1039,9 @@ static int progress_callback(
 	struct progress_data *pcs = (struct progress_data *)clientp;
 	time_t currentTime = time(NULL);
 	bool shouldPrintDueToTime = false;
+	if (lfs_shutdown_requested())
+		return 1; /* CURLE_ABORTED_BY_CALLBACK */
+
 	GIT_UNUSED(ulnow);
 	GIT_UNUSED(ultotal);
 	if (dlnow == 0) {
@@ -1372,6 +1391,9 @@ static CURLcode download_with_resume(
 	CURLcode res = CURLE_OK;
 	int attempt;
 	for (attempt = 1; attempt <= max_retries; ++attempt) {
+		if (lfs_shutdown_requested())
+			return CURLE_ABORTED_BY_CALLBACK;
+
 		res = curl_resume_url_execute(dl_curl, ftpfile);
 
 		if (res == CURLE_OK) {
@@ -1386,6 +1408,9 @@ static CURLcode download_with_resume(
 		        attempt, max_retries, curl_easy_strerror(res));
 
 		if (attempt < max_retries) {
+			if (lfs_shutdown_requested())
+				return CURLE_ABORTED_BY_CALLBACK;
+
 			printf("[INFO] Waiting %u seconds before next resume attempt...\n",
 			       interval_seconds);
 			fflush(stdout);
