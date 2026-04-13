@@ -1419,6 +1419,7 @@ static CURLcode download_with_resume(
 {
 	CURLcode res = CURLE_OK;
 	int attempt;
+	unsigned int slept;
 	for (attempt = 1; attempt <= max_retries; ++attempt) {
 		if (lfs_shutdown_requested())
 			return CURLE_ABORTED_BY_CALLBACK;
@@ -1443,7 +1444,13 @@ static CURLcode download_with_resume(
 			printf("[INFO] Waiting %u seconds before next resume attempt...\n",
 			       interval_seconds);
 			fflush(stdout);
-			sleep_seconds(interval_seconds);
+			/* Sleep in short chunks so cancellation is responsive during
+			 * backoff waits. */
+			for (slept = 0; slept < interval_seconds; ++slept) {
+				if (lfs_shutdown_requested())
+					return CURLE_ABORTED_BY_CALLBACK;
+				sleep_seconds(1);
+			}
 		}
 	}
 
