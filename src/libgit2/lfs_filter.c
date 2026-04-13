@@ -49,7 +49,7 @@ extern int git_lfs_shutdown_requested(void) __attribute__((weak));
  * before a new clone allows reuse.
  * Access via symbol from the host: extern volatile int git_lfs_cancel_requested;
  */
-volatile int git_lfs_cancel_requested = 0;
+__attribute__((visibility("default"))) volatile int git_lfs_cancel_requested = 0;
 
 #define LFS_RESUME_ATTEMPTS_DEFAULT 5
 #define LFS_RESUME_INTERVAL_DEFAULT_SECONDS 10
