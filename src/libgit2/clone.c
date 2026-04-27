@@ -662,7 +662,6 @@ static int clone_repo(
 		return error;
 	}
 
-	repo->url = git__strdup(url);
 	if (!(error = create_and_configure_origin(&origin, repo, url, &options))) {
 		bool clone_local;
 

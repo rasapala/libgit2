@@ -192,7 +192,6 @@ void git_repository_free(git_repository *repo)
 	git__free(repo->namespace);
 	git__free(repo->ident_name);
 	git__free(repo->ident_email);
-	git__free(repo->url);
 
 	git__memzero(repo, sizeof(*repo));
 	git__free(repo);
@@ -1126,20 +1125,6 @@ static int repo_is_worktree(unsigned *out, const git_repository *repo)
 
 	git_str_dispose(&gitdir_link);
 	return error;
-}
-
-int git_repository_set_url(
-        git_repository *repo,
-        const char *url)
-{
-	char *new_url;
-	GIT_ASSERT_ARG(repo);
-	GIT_ASSERT_ARG(url);
-	new_url = git__strdup(url);
-	GIT_ERROR_CHECK_ALLOC(new_url);
-	if (repo->url) git__free(repo->url);
-	repo->url = new_url;
-	return 0;
 }
 
 int git_repository_open_ext(

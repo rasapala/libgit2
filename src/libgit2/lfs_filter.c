@@ -32,6 +32,7 @@
 #include "filter.h"
 #include "str.h"
 #include "repository.h"
+#include "remote.h"
 #include "regexp.h"
 #include "time.h"
 
@@ -797,6 +798,8 @@ static int lfs_insert_id(
 	const char *size_regexp = "\nsize (.*)\n";
 
 	git_repository *repo = git_filter_source_repo(src);
+	git_remote *remote = NULL;
+	const char *remote_url = NULL;
 	const char *path = git_filter_source_path(src);
 	const char *workdir = git_repository_workdir(repo);
 
@@ -806,7 +809,11 @@ static int lfs_insert_id(
 
 	lfs_attrs_set_path(la, path);
 	lfs_attrs_set_workdir(la, workdir);
-	lfs_attrs_set_url(la, repo->url);
+	if ((error = git_remote_lookup(&remote, repo, "origin")) < 0)
+		goto on_error;
+	remote_url = git_remote_url(remote);
+	lfs_attrs_set_url(la, remote_url);
+	git_remote_free(remote);
 	la->is_download = true;
 
 	/* Duplicate incoming string so regex functions can modify safely */
