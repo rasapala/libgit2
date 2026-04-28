@@ -66,10 +66,10 @@ GIT_LFS_CANCEL_EXPORT volatile int git_lfs_cancel_requested = 0;
 static int g_lfs_resume_attempts = 5; /* <-- make configurable */
 static unsigned int g_lfs_resume_interval_secs = 10; /* <-- make configurable */
 
-/* Log file path (set once per lfs_download call from the repo workdir) */
-static char g_lfs_log_path[4096];
-/* Track if we've truncated the log file for the current workdir */
-static bool g_lfs_log_path_truncated = false;
+struct lfs_log_state {
+	char path[4096];
+	bool truncated;
+};
 
 static int lfs_shutdown_requested(void)
 {
@@ -95,13 +95,16 @@ static int lfs_shutdown_requested(void)
  * The log file is NOT created here. It will be created on the first
  * error message for the current workdir.
  */
-static void lfs_log_set_path(const char *workdir)
+static void lfs_log_set_path(struct lfs_log_state *log_state, const char *workdir)
 {
 	char new_path[4096];
 
+	if (!log_state)
+		return;
+
 	if (!workdir || !*workdir) {
-		g_lfs_log_path[0] = '\0';
-		g_lfs_log_path_truncated = false;
+		log_state->path[0] = '\0';
+		log_state->truncated = false;
 		return;
 	}
 
@@ -109,9 +112,9 @@ static void lfs_log_set_path(const char *workdir)
 
 	/* If the path changed (new clone/operation), mark for truncation on
 	 * next error so errors from previous runs don't appear. */
-	if (strcmp(new_path, g_lfs_log_path) != 0) {
-		memcpy(g_lfs_log_path, new_path, strlen(new_path) + 1);
-		g_lfs_log_path_truncated = false;
+	if (strcmp(new_path, log_state->path) != 0) {
+		memcpy(log_state->path, new_path, strlen(new_path) + 1);
+		log_state->truncated = false;
 	}
 }
 
@@ -125,34 +128,58 @@ static void lfs_log_set_path(const char *workdir)
  * The log file is created only when this function is first called for a
  * given workdir. If no errors occur, the file is never created.
  */
-static void lfs_log_error(const char *fmt, ...)
+static void lfs_log_vwrite(
+	struct lfs_log_state *log_state,
+	const char *fmt,
+	va_list ap)
 {
-	va_list ap;
+	va_list ap_copy;
 	FILE *f;
 
-	va_start(ap, fmt);
-	vfprintf(stderr, fmt, ap);
-	va_end(ap);
+	va_copy(ap_copy, ap);
+	vfprintf(stderr, fmt, ap_copy);
+	va_end(ap_copy);
 
-	if (g_lfs_log_path[0] != '\0') {
+	if (log_state && log_state->path[0] != '\0') {
 		/* On first error for this workdir, truncate the file to clear
 		 * any errors from previous operations */
-		if (!g_lfs_log_path_truncated) {
-			f = fopen(g_lfs_log_path, "w");
+		if (!log_state->truncated) {
+			f = fopen(log_state->path, "w");
 			if (f)
 				fclose(f);
-			g_lfs_log_path_truncated = true;
+			log_state->truncated = true;
 		}
 
 		/* Append this error message */
-		f = fopen(g_lfs_log_path, "a");
+		f = fopen(log_state->path, "a");
 		if (f) {
-			va_start(ap, fmt);
-			vfprintf(f, fmt, ap);
-			va_end(ap);
+			va_copy(ap_copy, ap);
+			vfprintf(f, fmt, ap_copy);
+			va_end(ap_copy);
 			fclose(f);
 		}
 	}
+}
+
+static void lfs_log_error(const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	lfs_log_vwrite(NULL, fmt, ap);
+	va_end(ap);
+}
+
+static void lfs_log_error_with_state(
+	struct lfs_log_state *log_state,
+	const char *fmt,
+	...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	lfs_log_vwrite(log_state, fmt, ap);
+	va_end(ap);
 }
 
 /*
@@ -375,6 +402,7 @@ typedef struct lfs_attrs {
 	char *lfs_size;
 	char *url;
 	bool is_download;
+	struct lfs_log_state log_state;
 } lfs_attrs;
 
 /*
@@ -976,6 +1004,7 @@ struct FtpFile {
 	FILE *stream;
 	uint64_t expected_size;
 	uint64_t written_size;
+	struct lfs_log_state *log_state;
 };
 
 static const char *sizeUnits[] = { "B", "KB", "MB", "GB", "TB", NULL };
@@ -1123,7 +1152,8 @@ file_write_callback(void *buffer, size_t size, size_t nmemb, void *stream)
 		/* open file for writing */
 		out->stream = fopen(out->filename, "wb");
 		if (!out->stream) {
-			lfs_log_error(
+			lfs_log_error_with_state(
+			        out->log_state,
 			        "\n[ERROR] failure, cannot open file to write: %s\n",
 			        out->filename);
 			return 0; /* failure, cannot open file to write */
@@ -1133,7 +1163,8 @@ file_write_callback(void *buffer, size_t size, size_t nmemb, void *stream)
 
 	if (out->expected_size > 0) {
 		if (out->written_size >= out->expected_size) {
-			lfs_log_error(
+			lfs_log_error_with_state(
+			        out->log_state,
 			        "\n[ERROR] refusing extra download bytes for %s (expected=%" PRIu64
 			        ")\n",
 			        out->filename, out->expected_size);
@@ -1142,7 +1173,8 @@ file_write_callback(void *buffer, size_t size, size_t nmemb, void *stream)
 
 		if ((uint64_t)realsize >
 		    (out->expected_size - out->written_size)) {
-			lfs_log_error(
+			lfs_log_error_with_state(
+			        out->log_state,
 			        "\n[ERROR] server sent more data than expected for %s (expected=%" PRIu64
 			        ")\n",
 			        out->filename, out->expected_size);
@@ -1157,7 +1189,8 @@ file_write_callback(void *buffer, size_t size, size_t nmemb, void *stream)
 		return 0;
 
 	if (to_write != realsize) {
-		lfs_log_error(
+		lfs_log_error_with_state(
+		        out->log_state,
 		        "\n[WARN] server sent more data than expected for %s (expected=%" PRIu64
 		        ")\n",
 		        out->filename, out->expected_size);
@@ -1173,7 +1206,8 @@ static CURLcode ftpfile_validate_final_size(struct FtpFile *ftpfile)
 		return CURLE_OK;
 
 	if (ftpfile->written_size != ftpfile->expected_size) {
-		lfs_log_error(
+		lfs_log_error_with_state(
+		        ftpfile->log_state,
 		        "\n[ERROR] downloaded size mismatch for %s (got=%" PRIu64
 		        ", expected=%" PRIu64 ")\n",
 		        ftpfile->filename, ftpfile->written_size,
@@ -1235,6 +1269,7 @@ static void print_download_info(const char *filename, size_t bytes)
  * Prints transport/TLS context for easier debugging of cURL failures.
  */
 static void print_curl_error_details(
+		struct lfs_log_state *log_state,
 		CURL *curl,
 		CURLcode res,
 		const char *phase,
@@ -1262,32 +1297,34 @@ static void print_curl_error_details(
 	(void)curl_easy_getinfo(
 			curl, CURLINFO_SSL_VERIFYRESULT, &ssl_verify_result);
 
-	lfs_log_error("[ERROR] LFS %s failed: %s\n", phase,
+	lfs_log_error_with_state(log_state, "[ERROR] LFS %s failed: %s\n", phase,
 	        curl_easy_strerror(res));
 
 	if (error_buffer && *error_buffer)
-		lfs_log_error("[ERROR] cURL detail: %s\n", error_buffer);
+		lfs_log_error_with_state(log_state, "[ERROR] cURL detail: %s\n", error_buffer);
 
 	if (url && *url)
-		lfs_log_error("[ERROR] URL: %s\n", url);
+		lfs_log_error_with_state(log_state, "[ERROR] URL: %s\n", url);
 
 	if (response_code > 0)
-		lfs_log_error("[ERROR] HTTP status: %ld\n", response_code);
+		lfs_log_error_with_state(log_state, "[ERROR] HTTP status: %ld\n", response_code);
 
 	if (primary_ip && *primary_ip)
-		lfs_log_error(
+		lfs_log_error_with_state(
+		        log_state,
 		        "[ERROR] Remote endpoint: %s:%ld (local: %s:%ld)\n",
 		        primary_ip, primary_port, local_ip ? local_ip : "?",
 		        local_port);
 
 	if (os_errno != 0)
-		lfs_log_error("[ERROR] OS errno: %ld (%s)\n", os_errno,
+		lfs_log_error_with_state(log_state, "[ERROR] OS errno: %ld (%s)\n", os_errno,
 		        strerror((int)os_errno));
 
 	if (res == CURLE_PEER_FAILED_VERIFICATION ||
 	    res == CURLE_SSL_CACERT ||
 	    res == CURLE_SSL_CONNECT_ERROR)
-		lfs_log_error(
+		lfs_log_error_with_state(
+		        log_state,
 		        "[ERROR] TLS verify result: %ld (0 means verify passed)\n",
 		        ssl_verify_result);
 }
@@ -1323,7 +1360,8 @@ static int curl_resume_url_execute(CURL *dl_curl, struct FtpFile *ftpfile)
 
 		if (ftpfile->expected_size > 0 &&
 		    (uint64_t)offset > ftpfile->expected_size) {
-			lfs_log_error(
+			lfs_log_error_with_state(
+			        ftpfile->log_state,
 			        "\n[WARN] local partial file is larger than expected (%" PRIu64
 			        "), restarting download\n",
 			        ftpfile->expected_size);
@@ -1331,7 +1369,8 @@ static int curl_resume_url_execute(CURL *dl_curl, struct FtpFile *ftpfile)
 			fclose(ftpfile->stream);
 			ftpfile->stream = fopen(ftpfile->filename, "wb");
 			if (!ftpfile->stream) {
-				lfs_log_error(
+				lfs_log_error_with_state(
+				        ftpfile->log_state,
 				        "\n[ERROR] Cannot truncate file %s\n",
 				        ftpfile->filename);
 				return -1;
@@ -1345,7 +1384,7 @@ static int curl_resume_url_execute(CURL *dl_curl, struct FtpFile *ftpfile)
 		        existing file
 		fclose(ftpfile->stream);*/
 	} else {
-		lfs_log_error("\n[ERROR] Cannot open file %s\n",
+		lfs_log_error_with_state(ftpfile->log_state, "\n[ERROR] Cannot open file %s\n",
 		        ftpfile->filename);
 		return -1;
 	}
@@ -1367,7 +1406,8 @@ static int curl_resume_url_execute(CURL *dl_curl, struct FtpFile *ftpfile)
 		curl_easy_getinfo(dl_curl, CURLINFO_RESPONSE_CODE, &http_code);
 		if (http_code != 206) {
 			/* Strict resume policy: restart from zero on non-206 */
-			lfs_log_error(
+			lfs_log_error_with_state(
+			        ftpfile->log_state,
 			        "\n[ERROR] Server did not return 206 for resumed request (HTTP %ld), restarting from zero\n",
 			        http_code);
 
@@ -1378,7 +1418,8 @@ static int curl_resume_url_execute(CURL *dl_curl, struct FtpFile *ftpfile)
 
 			ftpfile->stream = fopen(ftpfile->filename, "wb");
 			if (!ftpfile->stream) {
-				lfs_log_error(
+				lfs_log_error_with_state(
+				        ftpfile->log_state,
 				        "\n[ERROR] Cannot truncate file %s\n",
 				        ftpfile->filename);
 				return -1;
@@ -1441,7 +1482,7 @@ static CURLcode download_with_resume(
 			return CURLE_OK;
 		}
 
-		lfs_log_error("[WARN] Resume attempt %d/%d failed: %s\n",
+		lfs_log_error_with_state(ftpfile->log_state, "[WARN] Resume attempt %d/%d failed: %s\n",
 		        attempt, max_retries, curl_easy_strerror(res));
 
 		if (attempt < max_retries) {
@@ -1503,13 +1544,12 @@ static void lfs_download(git_filter *self, void *payload)
 	if (!la) {
 		goto cleanup;
 	}
+	lfs_log_set_path(&la->log_state, la->workdir);
 
 	/* Currently only download is supoprted, no lfs file upload */
 	if (!la->is_download) {
 		goto done;
 	}
-
-	lfs_log_set_path(la->workdir);
 
 	tmp_out_file = append_cstr_to_buffer(la->full_path, "lfs_part");
 	if (tmp_out_file == NULL) {
@@ -1521,6 +1561,7 @@ static void lfs_download(git_filter *self, void *payload)
 	ftpfile.filename = tmp_out_file;
 	ftpfile.expected_size = (uint64_t)lfs_expected_size;
 	ftpfile.written_size = 0;
+	ftpfile.log_state = &la->log_state;
 
 	/* get a curl handle */
 	info_curl = curl_easy_init();
@@ -1619,7 +1660,8 @@ static void lfs_download(git_filter *self, void *payload)
 	/* Check for errors */
 	if (res != CURLE_OK) {
 		print_curl_error_details(
-		        info_curl, res, "batch request", info_error_buffer);
+		        &la->log_state, info_curl, res, "batch request",
+		        info_error_buffer);
 		goto cleanup;
 	}
 
@@ -1712,7 +1754,8 @@ static void lfs_download(git_filter *self, void *payload)
 
 	/* Check for resume of partial download error */
 	if (res == CURLE_PARTIAL_FILE) {
-		lfs_log_error(
+		lfs_log_error_with_state(
+		        &la->log_state,
 		        "[WARN] Got CURLE_PARTIAL_FILE, attempting resume sequence\n");
 		res = download_with_resume(
 		        dl_curl, &ftpfile, g_lfs_resume_attempts,
@@ -1721,12 +1764,14 @@ static void lfs_download(git_filter *self, void *payload)
 
 	/* Check for errors */
 	if (res != CURLE_OK) {
-		lfs_log_error(
+		lfs_log_error_with_state(
+		        &la->log_state,
 		        "[ERROR] Error downloading object: %s (%s)\n",
 		        la->path ? la->path : "(unknown)",
 		        la->lfs_oid ? la->lfs_oid : "(unknown)");
 		print_curl_error_details(
-		        dl_curl, res, "object download", download_error_buffer);
+		        &la->log_state, dl_curl, res, "object download",
+		        download_error_buffer);
 		/* Very important to close the file to write any bytes
 		 * downloaded */
 		if (ftpfile.stream) {
@@ -1770,7 +1815,9 @@ static void lfs_download(git_filter *self, void *payload)
 	 * ----------------------------------------------------
 	 */
 cleanup:
-	lfs_log_error("[ERROR] LFS download failed for %s\n",
+	lfs_log_error_with_state(
+	        la ? &la->log_state : NULL,
+	        "[ERROR] LFS download failed for %s\n",
 	        la ? la->full_path : "(null)");
 done:
 	/* Close stream if open */
