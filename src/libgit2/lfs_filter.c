@@ -30,10 +30,12 @@
 #include "hash.h"
 #include "oid.h"
 #include "filter.h"
+#include "net.h"
 #include "str.h"
 #include "repository.h"
 #include "remote.h"
 #include "regexp.h"
+#include "thread.h"
 #include "time.h"
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -44,11 +46,10 @@ extern int git_lfs_shutdown_requested(void) __attribute__((weak));
 #endif
 
 /*
- * Exported global cancel flag.
- * The embedding process may set this to non-zero at any time to abort all
- * ongoing or future LFS downloads in this process.  Resetting it to 0
- * before a new clone allows reuse.
- * Access via symbol from the host: extern volatile int git_lfs_cancel_requested;
+ * Exported cancel accessors.
+ * The embedding process may set the cancellation state to non-zero at any
+ * time to abort all ongoing or future LFS downloads in this process.
+ * Resetting it to 0 before a new clone allows reuse.
  */
 #if defined(_WIN32)
 #define GIT_LFS_CANCEL_EXPORT __declspec(dllexport)
@@ -57,14 +58,28 @@ extern int git_lfs_shutdown_requested(void) __attribute__((weak));
 #else
 #define GIT_LFS_CANCEL_EXPORT
 #endif
-GIT_LFS_CANCEL_EXPORT volatile int git_lfs_cancel_requested = 0;
+
+GIT_LFS_CANCEL_EXPORT void git_lfs_cancel_set(int value);
+GIT_LFS_CANCEL_EXPORT int git_lfs_cancel_get(void);
+
+static git_atomic32 g_lfs_cancel_requested;
+
+GIT_LFS_CANCEL_EXPORT void git_lfs_cancel_set(int value)
+{
+	git_atomic32_set(&g_lfs_cancel_requested, value);
+}
+
+GIT_LFS_CANCEL_EXPORT int git_lfs_cancel_get(void)
+{
+	return git_atomic32_get(&g_lfs_cancel_requested);
+}
 
 #define LFS_RESUME_ATTEMPTS_DEFAULT 5
 #define LFS_RESUME_INTERVAL_DEFAULT_SECONDS 10
 
 /* Configure how many resume attempts and how long to wait between them */
-static int g_lfs_resume_attempts = 5; /* <-- make configurable */
-static unsigned int g_lfs_resume_interval_secs = 10; /* <-- make configurable */
+static int g_lfs_resume_attempts = 5;
+static unsigned int g_lfs_resume_interval_secs = 10;
 
 struct lfs_log_state {
 	char path[4096];
@@ -75,7 +90,7 @@ static int lfs_shutdown_requested(void)
 {
 	/* Check the exported global flag first – reliably set from the host
 	 * without requiring symbol interposition (-rdynamic). */
-	if (git_lfs_cancel_requested)
+	if (git_lfs_cancel_get())
 		return 1;
 #if defined(__GNUC__) || defined(__clang__)
 	/* Fallback: weak symbol provided by the host executable. */
@@ -1275,6 +1290,8 @@ static void print_curl_error_details(
 		const char *phase,
 		const char *error_buffer)
 {
+	git_net_url url_info = GIT_NET_URL_INIT;
+	git_str sanitized_url = GIT_STR_INIT;
 	const char *url = NULL;
 	const char *primary_ip = NULL;
 	const char *local_ip = NULL;
@@ -1303,8 +1320,21 @@ static void print_curl_error_details(
 	if (error_buffer && *error_buffer)
 		lfs_log_error_with_state(log_state, "[ERROR] cURL detail: %s\n", error_buffer);
 
-	if (url && *url)
-		lfs_log_error_with_state(log_state, "[ERROR] URL: %s\n", url);
+	if (url && *url) {
+		if (git_net_url_parse(&url_info, url) == 0) {
+			git__free(url_info.username);
+			url_info.username = NULL;
+			git__free(url_info.password);
+			url_info.password = NULL;
+
+			if (git_net_url_fmt(&sanitized_url, &url_info) == 0)
+				lfs_log_error_with_state(log_state, "[ERROR] URL: %s\n", sanitized_url.ptr);
+			else
+				lfs_log_error_with_state(log_state, "[ERROR] URL: [redacted]\n");
+		} else {
+			lfs_log_error_with_state(log_state, "[ERROR] URL: [redacted]\n");
+		}
+	}
 
 	if (response_code > 0)
 		lfs_log_error_with_state(log_state, "[ERROR] HTTP status: %ld\n", response_code);
@@ -1327,6 +1357,9 @@ static void print_curl_error_details(
 		        log_state,
 		        "[ERROR] TLS verify result: %ld (0 means verify passed)\n",
 		        ssl_verify_result);
+
+	git_str_dispose(&sanitized_url);
+	git_net_url_dispose(&url_info);
 }
 
 /*
