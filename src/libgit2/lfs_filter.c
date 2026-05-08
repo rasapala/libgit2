@@ -86,6 +86,8 @@ struct lfs_log_state {
 	bool truncated;
 };
 
+static void lfs_log_error(const char *fmt, ...);
+
 static int lfs_shutdown_requested(void)
 {
 	/* Check the exported global flag first – reliably set from the host
@@ -112,6 +114,7 @@ static int lfs_shutdown_requested(void)
  */
 static void lfs_log_set_path(struct lfs_log_state *log_state, const char *workdir)
 {
+	int error;
 	char new_path[4096];
 
 	if (!log_state)
@@ -123,7 +126,14 @@ static void lfs_log_set_path(struct lfs_log_state *log_state, const char *workdi
 		return;
 	}
 
-	snprintf(new_path, sizeof(new_path), "%slfs_error.txt", workdir);
+	error = snprintf(new_path, sizeof(new_path), "%slfs_error.txt", workdir);
+	if (error < 0 || (size_t)error >= sizeof(new_path)) {
+		log_state->path[0] = '\0';
+		log_state->truncated = false;
+		lfs_log_error(
+		        "[WARN] lfs_error.txt path too long; file logging disabled\n");
+		return;
+	}
 
 	/* If the path changed (new clone/operation), mark for truncation on
 	 * next error so errors from previous runs don't appear. */
@@ -134,7 +144,7 @@ static void lfs_log_set_path(struct lfs_log_state *log_state, const char *workdi
 }
 
 /*
- * lfs_log_error
+ * lfs_log_vwrite
  * --------------
  * Writes a formatted error message to stderr and, if a log path has been
  * set via lfs_log_set_path(), also appends the message to lfs_error.txt
@@ -1833,8 +1843,17 @@ static void lfs_download(git_filter *self, void *payload)
 	}
 
 	if (p_rename(tmp_out_file, la->full_path) < 0) {
-		lfs_log_error("\n[ERROR] failed to rename file to '%s'\n",
-		        la->full_path);
+		lfs_log_error_with_state(
+		        &la->log_state,
+		        "\n[ERROR] failed to rename '%s' -> '%s' (errno=%d: %s)\n",
+		        tmp_out_file ? tmp_out_file : "(null)", la->full_path,
+		        errno, strerror(errno));
+#ifdef _WIN32
+		lfs_log_error_with_state(
+		        &la->log_state,
+		        "[ERROR] Win32 rename GetLastError=%lu\n",
+		        (unsigned long)GetLastError());
+#endif
 		goto cleanup;
 	}
 
