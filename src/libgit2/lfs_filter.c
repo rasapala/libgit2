@@ -1574,7 +1574,6 @@ static void lfs_download(git_filter *self, void *payload)
 	git_str res_str = GIT_STR_INIT;
 	git_str lfs_info_url = GIT_STR_INIT;
 	git_str lfs_info_data = GIT_STR_INIT;
-	bool resumingFileByBlobFilter = false;
 	struct progress_data progress_d = { 0 };
 	struct memory response = { 0 };
 	struct curl_slist *chunk = NULL;
@@ -1771,7 +1770,6 @@ static void lfs_download(git_filter *self, void *payload)
 	 * partial file on disk */
 	ftpfile.stream = fopen(ftpfile.filename, "r");
 	if (ftpfile.stream != NULL) {
-		resumingFileByBlobFilter = true;
 		fclose(ftpfile.stream);
 		ftpfile.stream = NULL;
 
@@ -1830,15 +1828,15 @@ static void lfs_download(git_filter *self, void *payload)
 		ftpfile.stream = NULL;
 	}
 
-	/* Remove lfs file and rename downloaded file to original lfs filename
-	 */
-	if (!resumingFileByBlobFilter) {
-		/* File does not exist when using blob filters */
-		if (p_unlink(la->full_path) < 0) {
-			lfs_log_error(
-			        "\n[ERROR] failed to delete file '%s'\n",
-			        la->full_path);
-			/* Ignore error here, react on next error */
+	/* If destination exists, unlink it before rename. This is independent
+	 * from whether we resumed via a partial temp file. */
+	if (p_access(la->full_path, F_OK) == 0) {
+		if (p_unlink(la->full_path) < 0 && errno != ENOENT) {
+			lfs_log_error_with_state(
+			        &la->log_state,
+			        "\n[ERROR] failed to delete existing destination file '%s' (errno=%d: %s)\n",
+			        la->full_path, errno, strerror(errno));
+			/* Ignore here and let rename produce the definitive failure. */
 		}
 	}
 
