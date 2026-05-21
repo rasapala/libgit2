@@ -1577,7 +1577,7 @@ static CURLcode download_with_resume(
 			return CURLE_OK;
 		}
 
-		lfs_log_error_with_state(ftpfile->log_state, "[WARN] Resume attempt %d/%d failed: %s\n",
+		printf("[WARN] Resume attempt %d/%d failed: %s\n",
 		        attempt, max_retries, curl_easy_strerror(res));
 
 		if (attempt < max_retries) {
@@ -1847,9 +1847,7 @@ static void lfs_download(git_filter *self, void *payload)
 
 	/* Check for resume of partial download error */
 	if (res == CURLE_PARTIAL_FILE) {
-		lfs_log_error_with_state(
-		        &la->log_state,
-		        "[WARN] Got CURLE_PARTIAL_FILE, attempting resume sequence\n");
+		printf("[WARN] Got CURLE_PARTIAL_FILE, attempting resume sequence\n");
 		res = download_with_resume(
 		        dl_curl, &ftpfile, g_lfs_resume_attempts,
 		        g_lfs_resume_interval_secs);
