@@ -616,6 +616,58 @@ append_cstr_to_buffer(const char *existingBuffer, const char *suffix)
 	return newBuffer;
 }
 
+static const char *lfs_last_path_sep(const char *path)
+{
+	const char *slash = strrchr(path, '/');
+
+#ifdef _WIN32
+	const char *backslash = strrchr(path, '\\');
+	if (!slash || (backslash && backslash > slash))
+		slash = backslash;
+#endif
+
+	return slash;
+}
+
+static int lfs_parent_dir_exists(const char *path)
+{
+	const char *sep;
+	git_str dir = GIT_STR_INIT;
+	struct stat st;
+	int exists = 0;
+	size_t dir_len;
+
+	if (!path || !*path)
+		return 0;
+
+	sep = lfs_last_path_sep(path);
+	if (!sep)
+		return (p_stat(".", &st) == 0 && S_ISDIR(st.st_mode));
+
+	if (sep == path)
+		return (p_stat("/", &st) == 0 && S_ISDIR(st.st_mode));
+
+	dir_len = (size_t)(sep - path);
+
+#ifdef _WIN32
+	/* For drive-root paths like "C:\\file", keep the trailing separator so
+	 * p_stat checks "C:\\" instead of "C:". */
+	if (dir_len == 2 && isalpha((unsigned char)path[0]) && path[1] == ':' &&
+	    (*sep == '/' || *sep == '\\'))
+		dir_len = 3;
+#endif
+
+	if (git_str_set(&dir, path, dir_len) < 0)
+		goto done;
+
+	if (p_stat(dir.ptr, &st) == 0 && S_ISDIR(st.st_mode))
+		exists = 1;
+
+done:
+	git_str_dispose(&dir);
+	return exists;
+}
+
 /*
  * get_lfs_info_match
  * -------------------
@@ -1828,30 +1880,37 @@ static void lfs_download(git_filter *self, void *payload)
 		ftpfile.stream = NULL;
 	}
 
-	/* If destination exists, unlink it before rename. This is independent
-	 * from whether we resumed via a partial temp file. */
-	if (p_access(la->full_path, F_OK) == 0) {
-		if (p_unlink(la->full_path) < 0 && errno != ENOENT) {
-			lfs_log_error_with_state(
-			        &la->log_state,
-			        "\n[ERROR] failed to delete existing destination file '%s' (errno=%d: %s)\n",
-			        la->full_path, errno, strerror(errno));
-			/* Ignore here and let rename produce the definitive failure. */
-		}
-	}
-
 	if (p_rename(tmp_out_file, la->full_path) < 0) {
+		int rename_errno = errno;
 		lfs_log_error_with_state(
 		        &la->log_state,
 		        "\n[ERROR] failed to rename '%s' -> '%s' (errno=%d: %s)\n",
 		        tmp_out_file ? tmp_out_file : "(null)", la->full_path,
-		        errno, strerror(errno));
+		        rename_errno, strerror(rename_errno));
+
+		if (rename_errno == ENOENT) {
+			int src_exists =
+			        (tmp_out_file && p_access(tmp_out_file, F_OK) == 0);
+			int dst_exists =
+			        (la->full_path && p_access(la->full_path, F_OK) == 0);
+			int src_parent_exists =
+			        lfs_parent_dir_exists(tmp_out_file);
+			int dst_parent_exists =
+			        lfs_parent_dir_exists(la->full_path);
+
+			lfs_log_error_with_state(
+			        &la->log_state,
+			        "[ERROR] rename ENOENT diagnostics: src_exists=%d src_parent_exists=%d dst_exists=%d dst_parent_exists=%d cancel_requested=%d\n",
+			        src_exists, src_parent_exists, dst_exists,
+			        dst_parent_exists, lfs_shutdown_requested());
+		}
 #ifdef _WIN32
 		lfs_log_error_with_state(
 		        &la->log_state,
 		        "[ERROR] Win32 rename GetLastError=%lu\n",
 		        (unsigned long)GetLastError());
 #endif
+		errno = rename_errno;
 		goto cleanup;
 	}
 
