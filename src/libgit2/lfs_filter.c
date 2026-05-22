@@ -1224,6 +1224,11 @@ file_write_callback(void *buffer, size_t size, size_t nmemb, void *stream)
 	size_t written_bytes;
 	uint64_t remaining = 0;
 
+	/* Abort immediately on cancellation — returning 0 makes cURL emit
+	 * CURLE_WRITE_ERROR, which the caller treats as a failed download. */
+	if (lfs_shutdown_requested())
+		return 0;
+
 	/* cURL invokes the write callback repeatedly, so guard cumulatively. */
 	if (!out->stream) {
 		/* open file for writing */
