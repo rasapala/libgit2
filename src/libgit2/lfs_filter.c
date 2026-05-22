@@ -37,6 +37,7 @@
 #include "regexp.h"
 #include "thread.h"
 #include "time.h"
+#include "ctype_compat.h"
 
 #if defined(__GNUC__) || defined(__clang__)
 /* Optional host-provided cancellation probe.
@@ -652,8 +653,7 @@ static int lfs_parent_dir_exists(const char *path)
 #ifdef _WIN32
 	/* For drive-root paths like "C:\\file", keep the trailing separator so
 	 * p_stat checks "C:\\" instead of "C:". */
-	if (dir_len == 2 && isalpha((unsigned char)path[0]) && path[1] == ':' &&
-	    (*sep == '/' || *sep == '\\'))
+	if (dir_len == 2 && git__isalpha(path[0]) && path[1] == ':')
 		dir_len = 3;
 #endif
 
