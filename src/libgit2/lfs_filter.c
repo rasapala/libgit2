@@ -1,4 +1,4 @@
-﻿/*
+/*
 / Copyright 2025 Intel Corporation
 /
 / Licensed under the Apache License, Version 2.0 (the "License");
@@ -619,15 +619,15 @@ append_cstr_to_buffer(const char *existingBuffer, const char *suffix)
 
 static const char *lfs_last_path_sep(const char *path)
 {
-	const char *slash = strrchr(path, '/');
+	const char *forward_sep_position = strrchr(path, '/');
 
 #ifdef _WIN32
-	const char *backslash = strrchr(path, '\\');
-	if (!slash || (backslash && backslash > slash))
-		slash = backslash;
+	const char *backward_sep_position = strrchr(path, '\\');
+	if (!forward_sep_position || (backward_sep_position && backward_sep_position > forward_sep_position))
+		forward_sep_position = backward_sep_position;
 #endif
 
-	return slash;
+	return forward_sep_position;
 }
 
 static int lfs_parent_dir_exists(const char *path)
